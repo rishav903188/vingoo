@@ -25,7 +25,10 @@ import { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import { setSocket } from './redux/userSlice'
 
-export const serverUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
+// Use Render backend in production (Vercel), but localhost in development
+export const serverUrl = import.meta.env.MODE === "production" 
+  ? "https://vingoo-1.onrender.com" 
+  : "http://localhost:8000";
 
 function App() {
   const { userData, isAuthLoading } = useSelector(state => state.user)

@@ -6,7 +6,7 @@ import { getAuth } from "firebase/auth";
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey:import.meta.env.VITE_FIREBASE_APIKEY,
+  apiKey: import.meta.env.VITE_FIREBASE_APIKEY || "dummy_api_key_to_prevent_crash",
   authDomain: "vingo-food-delivery.firebaseapp.com",
   projectId: "vingo-food-delivery",
   storageBucket: "vingo-food-delivery.firebasestorage.app",
