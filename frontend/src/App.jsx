@@ -27,7 +27,7 @@ import { setSocket } from './redux/userSlice'
 
 // Use Render backend in production (Vercel), but localhost in development
 export const serverUrl = import.meta.env.MODE === "production" 
-  ? "https://vingoo-1.onrender.com" 
+  ? "https://vingoo-main-backend.onrender.com" 
   : "http://localhost:8000";
 
 function App() {
