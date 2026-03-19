@@ -15,12 +15,12 @@ orderRouter.get("/get-current-order",isAuth,getCurrentOrder)
 orderRouter.post("/send-delivery-otp",isAuth,sendDeliveryOtp)
 orderRouter.post("/verify-delivery-otp",isAuth,verifyDeliveryOtp)
 orderRouter.post("/update-status/:orderId/:shopId",isAuth,updateOrderStatus)
-orderRouter.get('/accept-order/:assignmentId',isAuth,acceptOrder)
+orderRouter.get('/accept-order/:orderId/:shopOrderId',isAuth,acceptOrder)
 orderRouter.get('/get-order-by-id/:orderId',isAuth,getOrderById)
 orderRouter.get('/get-today-deliveries',isAuth,getTodayDeliveries)
 orderRouter.post('/cancel/:orderId/:shopId',isAuth,cancelOrder)
 
 orderRouter.post('/assign-delivery-boy/:orderId/:shopId',isAuth,forceAssignDeliveryBoy)
-orderRouter.post('/drop-assignment/:assignmentId',isAuth,dropAssignment)
+orderRouter.post('/drop-assignment/:orderId/:shopOrderId',isAuth,dropAssignment)
 
 export default orderRouter

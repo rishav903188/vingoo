@@ -69,14 +69,14 @@ const dispatch=useDispatch()
        <option value="">Change</option>
        <option value="pending">Pending</option>
        <option value="preparing">Preparing</option>
-       <option value="out of delivery">Out Of Delivery</option>
+       <option value="pending_assignment">Ready for Delivery</option>
        <option value="cancelled">Cancelled</option>
    </select>
 )}
 
 </div>
 
-{data.shopOrders.status=="out of delivery" && 
+{data.shopOrders.status=="pending_assignment" && 
 <div className="mt-3 p-3 border rounded-lg text-sm bg-orange-50 gap-4">
     {data.shopOrders.assignedDeliveryBoy?<p className="font-bold border-b pb-2 mb-2 text-gray-700">Assigned Delivery Boy:</p>:<p className="font-bold border-b pb-2 mb-2 text-gray-700">Available Delivery Boys:</p>}
    {availableBoys?.length>0?(

@@ -56,14 +56,8 @@ const shopOrderSchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "preparing", "out_for_delivery", "delivered", "cancelled"],
+      enum: ["pending", "preparing", "assigned", "pending_assignment", "out_for_delivery", "delivered", "cancelled"],
       default: "pending"
-    },
-
-    assignment: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "DeliveryAssignment",
-      default: null
     },
 
     assignedDeliveryBoy: {

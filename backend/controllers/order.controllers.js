@@ -3,7 +3,6 @@ import Razorpay from "razorpay";
 import Shop from "../models/shop.model.js";
 import Order from "../models/order.model.js";
 import User from "../models/user.model.js";
-import DeliveryAssignment from "../models/deliveryAssignment.model.js";
 import { sendDeliveryOtpMail } from "../utils/mail.js";
 
 let razorpay;
@@ -25,6 +24,7 @@ const normalizeStatus = (status) => {
   if (!status) return status;
   const lower = status.toLowerCase().trim();
   if (lower === "out of delivery") return "out_for_delivery";
+  if (lower === "pending assignment") return "pending_assignment";
   return lower.replace(/\s+/g, "_");
 };
 
@@ -308,44 +308,32 @@ export const getOrderById = async (req, res) => {
 
 export const getDeliveryBoyAssignment = async (req, res) => {
   try {
-    const assignments = await DeliveryAssignment.find({
-      $or: [
-        {
-          status: "broadcasted",
-          broadcastedTo: { $in: [req.userId] } // 🔥 THIS LINE FIX
-        },
-        {
-          status: "assigned",
-          assignedTo: req.userId
+    const orders = await Order.find({
+      shopOrders: {
+        $elemMatch: {
+          assignedDeliveryBoy: req.userId,
+          status: "assigned"
         }
-      ]
-    })
-      .populate({ path: "order", populate: buildOrderPopulate() })
-      .populate("shop");
+      }
+    }).populate(buildOrderPopulate());
 
-    const payload = assignments
-      .map((assignment) => {
-        const order = assignment.order;
-        if (!order) return null;
-
-        const shopOrder = order.shopOrders.find(
-          (so) => so._id.toString() === assignment.shopOrderId.toString()
-        );
-
-        if (!shopOrder) return null;
-
-        return {
-          assignmentId: assignment._id,
-          orderId: order._id,
-          shopOrderId: assignment.shopOrderId,
-          shopName: assignment.shop?.name || shopOrder.shop?.name,
-          deliveryAddress: order.deliveryAddress,
-          subtotal: shopOrder.subtotal,
-          items: shopOrder.shopOrderItems,
-          status: assignment.status
-        };
-      })
-      .filter(Boolean);
+    const payload = [];
+    for (const order of orders) {
+      for (const shopOrder of order.shopOrders) {
+        const assignedId = shopOrder.assignedDeliveryBoy?._id?.toString() || shopOrder.assignedDeliveryBoy?.toString();
+        if (assignedId === req.userId && shopOrder.status === "assigned") {
+          payload.push({
+            orderId: order._id,
+            shopOrderId: shopOrder._id,
+            shopName: shopOrder.shop?.name,
+            deliveryAddress: order.deliveryAddress,
+            subtotal: shopOrder.subtotal,
+            items: shopOrder.shopOrderItems,
+            status: shopOrder.status
+          });
+        }
+      }
+    }
 
     return res.status(200).json(payload);
   } catch (error) {
@@ -358,35 +346,28 @@ export const getDeliveryBoyAssignment = async (req, res) => {
 
 export const getCurrentOrder = async (req, res) => {
   try {
-    const assignments = await DeliveryAssignment.find({
-      assignedTo: req.userId,
-      status: "assigned",
-    })
-      .populate({ path: "order", populate: buildOrderPopulate() })
-      .populate("shop");
-
-    if (!assignments || assignments.length === 0) {
-      return res.status(200).json([]);
-    }
+    const orders = await Order.find({
+      shopOrders: {
+        $elemMatch: {
+          assignedDeliveryBoy: req.userId,
+          status: "out_for_delivery"
+        }
+      }
+    }).populate(buildOrderPopulate());
 
     const currentOrders = [];
-
-    for (const assignment of assignments) {
-      const order = assignment.order;
-      if (!order) continue;
-
-      const shopOrder = order.shopOrders.find(
-        (so) => so._id.toString() === assignment.shopOrderId.toString(),
-      );
-      if (!shopOrder) continue;
-
-      currentOrders.push({
-        _id: order._id,
-        assignmentId: assignment._id,
-        user: order.user,
-        deliveryAddress: order.deliveryAddress,
-        shopOrder,
-      });
+    for (const order of orders) {
+      for (const shopOrder of order.shopOrders) {
+        const assignedId = shopOrder.assignedDeliveryBoy?._id?.toString() || shopOrder.assignedDeliveryBoy?.toString();
+        if (assignedId === req.userId && shopOrder.status === "out_for_delivery") {
+          currentOrders.push({
+            _id: order._id,
+            user: order.user,
+            deliveryAddress: order.deliveryAddress,
+            shopOrder,
+          });
+        }
+      }
     }
 
     return res.status(200).json(currentOrders);
@@ -400,37 +381,32 @@ export const getCurrentOrder = async (req, res) => {
 
 export const acceptOrder = async (req, res) => {
   try {
-    const assignment = await DeliveryAssignment.findById(
-      req.params.assignmentId,
-    );
-    if (!assignment) {
-      return res.status(404).json({ message: "assignment not found" });
+    const { orderId, shopOrderId } = req.params;
+    const order = await Order.findById(orderId);
+    if (!order) return res.status(404).json({ message: "order not found" });
+
+    const shopOrder = order.shopOrders.find((so) => so._id.toString() === shopOrderId);
+    if (!shopOrder) return res.status(404).json({ message: "shop order not found" });
+
+    if (shopOrder.assignedDeliveryBoy?.toString() !== req.userId || shopOrder.status !== "assigned") {
+      return res.status(400).json({ message: "invalid assignment state" });
     }
 
-    if (assignment.status !== "broadcasted") {
-      return res.status(400).json({ message: "assignment already taken" });
+    shopOrder.status = "out_for_delivery";
+    await order.save();
+
+    const io = req.app.get("io");
+    if (io) {
+      io.emit("update-status", {
+        orderId: order._id,
+        shopId: shopOrder.shop,
+        status: "out_for_delivery", 
+        userId: order.user,
+        deliveryBoyId: req.userId,
+      });
     }
 
-    assignment.assignedTo = req.userId;
-    assignment.status = "assigned";
-    assignment.acceptedAt = new Date();
-    await assignment.save();
-
-    const order = await Order.findById(assignment.order);
-    if (order) {
-      const shopOrder = order.shopOrders.find(
-        (so) => so._id.toString() === assignment.shopOrderId.toString(),
-      );
-      if (shopOrder) {
-        shopOrder.assignedDeliveryBoy = req.userId;
-        shopOrder.assignment = assignment._id;
-        await order.save();
-      }
-    }
-
-    const populated = await Order.findById(assignment.order).populate(
-      buildOrderPopulate(),
-    );
+    const populated = await Order.findById(orderId).populate(buildOrderPopulate());
     return res.status(200).json(populated);
   } catch (error) {
     console.log("ACCEPT ORDER ERROR:", error);
@@ -538,10 +514,7 @@ export const verifyDeliveryOtp = async (req, res) => {
     // or we can clear it. Leaving it is fine since status is delivered.
     await order.save();
 
-    await DeliveryAssignment.findOneAndUpdate(
-      { order: order._id, shopOrderId: shopOrder._id },
-      { status: "completed" },
-    );
+    await order.save();
 
     const io = req.app.get("io");
     if (io) {
@@ -569,7 +542,7 @@ export const updateOrderStatus = async (req, res) => {
 
     const normalizedStatus = normalizeStatus(status);
     if (
-      !["pending", "preparing", "out_for_delivery", "delivered", "cancelled"].includes(
+      !["pending", "preparing", "assigned", "pending_assignment", "out_for_delivery", "delivered", "cancelled"].includes(
         normalizedStatus,
       )
     ) {
@@ -589,12 +562,8 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     if (normalizedStatus === "cancelled") {
-      // Cleanup any delivery assignments tied to this cancellation
-      await DeliveryAssignment.deleteMany({ order: order._id, shopOrderId: shopOrder._id });
-
       order.shopOrders.pull(shopOrder._id);
       await order.save();
-
       if (order.shopOrders.length === 0) {
         await Order.findByIdAndDelete(order._id);
       }
@@ -604,39 +573,13 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     let availableBoys = [];
-
-    if (normalizedStatus === "out_for_delivery") {
-      const deliveryBoys = await User.find({
-        role: "deliveryBoy",
-      });
+    if (normalizedStatus === "pending_assignment") {
+      const deliveryBoys = await User.find({ role: "deliveryBoy" });
       availableBoys = deliveryBoys.map((boy) => ({
         _id: boy._id,
         fullName: boy.fullName,
         mobile: boy.mobile,
       }));
-
-      const assignment = await DeliveryAssignment.create({
-        order: order._id,
-        shop: shopOrder.shop,
-        shopOrderId: shopOrder._id,
-        broadcastedTo: deliveryBoys.map((b) => b._id),
-      });
-
-      shopOrder.assignment = assignment._id;
-
-      const shop = await Shop.findById(shopOrder.shop);
-      const io = req.app.get("io");
-      if (io) {
-        io.emit("newAssignment", {
-          assignmentId: assignment._id,
-          orderId: order._id,
-          shopOrderId: shopOrder._id,
-          shopName: shop?.name,
-          deliveryAddress: order.deliveryAddress,
-          subtotal: shopOrder.subtotal,
-          items: shopOrder.shopOrderItems,
-        });
-      }
     }
 
     const io = req.app.get("io");
@@ -755,22 +698,8 @@ export const forceAssignDeliveryBoy = async (req, res) => {
     const shopOrder = order.shopOrders.find((so) => so.shop.toString() === shopId);
     if (!shopOrder) return res.status(404).json({ message: "shop order not found" });
 
-    const assignment = await DeliveryAssignment.findOne({
-      order: order._id,
-      shopOrderId: shopOrder._id,
-    });
-
-    if (!assignment) {
-      return res.status(404).json({ message: "assignment not found" });
-    }
-
-    assignment.assignedTo = deliveryBoyId;
-    assignment.status = "assigned";
-    assignment.acceptedAt = new Date();
-    await assignment.save();
-
     shopOrder.assignedDeliveryBoy = deliveryBoyId;
-    shopOrder.assignment = assignment._id;
+    shopOrder.status = "assigned";
     await order.save();
 
     const io = req.app.get("io");
@@ -778,7 +707,7 @@ export const forceAssignDeliveryBoy = async (req, res) => {
       io.emit("update-status", {
         orderId: order._id,
         shopId: shopId,
-        status: "out_for_delivery",
+        status: "assigned",
         userId: order.user,
         deliveryBoyId: deliveryBoyId,
       });
@@ -793,49 +722,31 @@ export const forceAssignDeliveryBoy = async (req, res) => {
 
 export const dropAssignment = async (req, res) => {
   try {
-    const assignment = await DeliveryAssignment.findById(req.params.assignmentId).populate("shop");
-    if (!assignment || assignment.assignedTo?.toString() !== req.userId) {
-      return res.status(403).json({ message: "not authorized or not found" });
-    }
-
-    const order = await Order.findById(assignment.order);
+    const { orderId, shopOrderId } = req.params;
+    
+    const order = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "order not found" });
 
-    const shopOrder = order.shopOrders.find((so) => so._id.toString() === assignment.shopOrderId.toString());
+    const shopOrder = order.shopOrders.find((so) => so._id.toString() === shopOrderId);
+    if (!shopOrder) return res.status(404).json({ message: "shop order not found" });
 
-    if (shopOrder) {
-      shopOrder.assignedDeliveryBoy = null;
-      await order.save();
+    if (shopOrder.assignedDeliveryBoy?.toString() !== req.userId) {
+       return res.status(403).json({ message: "not authorized" });
     }
 
-    assignment.assignedTo = null;
-    assignment.status = "broadcasted";
-    assignment.acceptedAt = null;
-    assignment.broadcastedTo.pull(req.userId);
-    await assignment.save();
+    shopOrder.assignedDeliveryBoy = null;
+    shopOrder.status = "pending_assignment";
+    await order.save();
 
     const io = req.app.get("io");
     if (io) {
       // Alert shop owner the boy dropped it
-      if (shopOrder) {
-        io.emit("update-status", {
-          orderId: order._id,
-          shopId: shopOrder.shop,
-          status: "out_for_delivery", 
-          userId: order.user,
-          deliveryBoyId: null, // Signals dropped
-        });
-      }
-      // Re-broadcast to pool natively
-      io.emit("newAssignment", {
-        assignmentId: assignment._id,
+      io.emit("update-status", {
         orderId: order._id,
-        shopOrderId: assignment.shopOrderId,
-        shopName: assignment.shop?.name || shopOrder?.shop?.name,
-        deliveryAddress: order.deliveryAddress,
-        subtotal: shopOrder?.subtotal,
-        items: shopOrder?.shopOrderItems,
-        status: "broadcasted",
+        shopId: shopOrder.shop,
+        status: "pending_assignment", 
+        userId: order.user,
+        deliveryBoyId: null, // Signals dropped
       });
     }
 

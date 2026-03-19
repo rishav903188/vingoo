@@ -76,7 +76,7 @@ function DeliveryBoy() {
       );
 
       const rawData = result.data || [];
-      setAvailableAssignments(rawData.filter(a => a.status === "broadcasted"));
+      setAvailableAssignments(rawData);
     } catch (error) {
       console.log(error);
     }
@@ -100,20 +100,18 @@ function DeliveryBoy() {
   };
 
   // ✅ ACCEPT ORDER
-  const acceptOrder = async (assignmentId) => {
-    if (!assignmentId) return;
-
+  const acceptOrder = async (orderId, shopOrderId) => {
     try {
       const result = await axios.get(
-        `${serverUrl}/api/order/accept-order/${assignmentId}`,
+        `${serverUrl}/api/order/accept-order/${orderId}/${shopOrderId}`,
         { withCredentials: true }
       );
-      
-      setAvailableAssignments((prev) => prev.filter(a => a.assignmentId !== assignmentId));
-      console.log(result.data);
+      alert("Order Accepted limits");
+      setAvailableAssignments((prev) => prev.filter(a => a.orderId !== orderId));
       await getCurrentOrder();
     } catch (error) {
       console.log(error);
+      alert(error.response?.data?.message || "Error accepting order");
     }
   };
 
@@ -127,6 +125,12 @@ function DeliveryBoy() {
     });
 
     socket.on("update-status", (data) => {
+      // 1. If assigned directly by the owner
+      if (data.status === "assigned" && data.deliveryBoyId === userData._id) {
+         getAssignments();
+      }
+      
+      // 2. If cancelled by owner or user
       if (data.status === "cancelled") {
          setAvailableAssignments(prev => prev.filter(a => a.orderId !== data.orderId));
          
@@ -175,11 +179,11 @@ function DeliveryBoy() {
   };
 
   // 🗑️ DROP ASSIGNMENT
-  const dropAssignment = async (assignmentId) => {
+  const dropAssignment = async (orderId, shopOrderId) => {
     if (!window.confirm("Are you sure you want to drop this active delivery assignment?")) return;
     try {
       await axios.post(
-        `${serverUrl}/api/order/drop-assignment/${assignmentId}`,
+        `${serverUrl}/api/order/drop-assignment/${orderId}/${shopOrderId}`,
         {},
         { withCredentials: true }
       );
@@ -243,7 +247,7 @@ function DeliveryBoy() {
 
                 <button 
                   className="bg-orange-500 text-white px-4 py-2 font-bold rounded-lg hover:bg-orange-600 transition shadow" 
-                  onClick={() => acceptOrder(a.assignmentId)}
+                  onClick={() => acceptOrder(a.orderId, a.shopOrderId)}
                 >
                   Accept
                 </button>
@@ -315,7 +319,7 @@ function DeliveryBoy() {
                 </button>
                 <button
                   className="w-full bg-white text-red-500 border border-red-500 font-semibold py-2 px-4 rounded-xl shadow-sm hover:bg-red-50 active:scale-95 transition-all duration-200"
-                  onClick={() => dropAssignment(currentOrders[activeOrderIndex].assignmentId)}
+                  onClick={() => dropAssignment(currentOrders[activeOrderIndex]._id, currentOrders[activeOrderIndex].shopOrder._id)}
                 >
                   Drop Assignment
                 </button>
